@@ -49,7 +49,8 @@ def ask_openai(user_text):
 
     data = response.json()
     try:
-        return data["output"][0]["content"][0]["text"]
+        print(data)
+return str(data)
     except:
         return "Ошибка ответа от ИИ"
 
