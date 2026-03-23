@@ -25,34 +25,31 @@ def send_message(chat_id, text):
     })
 
 def ask_openai(user_text):
-    response = requests.post(
-        "https://api.openai.com/v1/responses",
-        headers={
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json"
-        },
-        json={
-            "model": "gpt-5.3",
-            "input": [
-                {
-                    "role": "system",
-                    "content": "Ты эксперт по Magic: The Gathering. Отвечай кратко и только по теме MTG. Если вопрос не по теме — отвечай: 'Я отвечаю только по MTG.'"
-                },
-                {
-                    "role": "user",
-                    "content": user_text
-                }
-            ],
-            "max_output_tokens": 150
-        }
-    )
-
-    data = response.json()
     try:
-        print(data)
-return str(data)
-    except:
-        return "Ошибка ответа от ИИ"
+        response = requests.post(
+            "https://api.openai.com/v1/responses",
+            headers={
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "gpt-4.1-mini",
+                "input": f"Ты эксперт по MTG. Отвечай кратко.\n\nВопрос: {user_text}",
+                "max_output_tokens": 150
+            }
+        )
+
+        data = response.json()
+
+        # правильный способ получения текста
+        if "output_text" in data:
+            return data["output_text"]
+
+        # fallback
+        return str(data)
+
+    except Exception as e:
+        return f"Ошибка: {str(e)}"
 
 @app.route("/", methods=["GET"])
 def home():
