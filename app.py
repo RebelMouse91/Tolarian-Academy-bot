@@ -7,7 +7,6 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 app = Flask(__name__)
 
-
 MTG_KEYWORDS = [
     "mtg", "magic", "card", "deck", "commander",
     "mana", "spell", "creature", "planeswalker",
@@ -20,10 +19,7 @@ def is_mtg_related(text):
     if not text:
         return False
     text = text.lower()
-    for word in MTG_KEYWORDS:
-        if word in text:
-            return True
-    return False
+    return any(word in text for word in MTG_KEYWORDS)
 
 
 def send_message(chat_id, text):
@@ -39,7 +35,7 @@ def send_message(chat_id, text):
 
 def ask_openai(user_text):
     try:
-        r = requests.post(
+        response = requests.post(
             "https://api.openai.com/v1/responses",
             headers={
                 "Authorization": f"Bearer {OPENAI_API_KEY}",
@@ -53,38 +49,24 @@ def ask_openai(user_text):
             timeout=30
         )
 
-        # если не 200 — сразу показываем
-        if r.status_code != 200:
-            return "OpenAI error: " + r.text
+        if response.status_code != 200:
+            return f"OpenAI error: {response.text}"
 
+        data = response.json()
+
+        # ✅ ПРАВИЛЬНЫЙ способ получения текста
+        if isinstance(data, dict) and "output_text" in data:
+            if data["output_text"]:
+                return data["output_text"]
+
+        # 🔁 fallback (если другой формат)
         try:
-            data = r.json()
+            return data["output"][0]["content"][0]["text"]
         except:
-            return "OpenAI вернул не JSON: " + r.text
-
-        # если пусто
-        if not data:
-            return "Пустой ответ от OpenAI"
-
-        # если ошибка от API
-        if type(data) == dict and "error" in data:
-            return "OpenAI error: " + str(data["error"])
-
-        # 🔥 БЕЗОПАСНЫЙ РАЗБОР (без .get на None)
-        try:
-            output = data["output"]
-            for item in output:
-                content = item["content"]
-                for block in content:
-                    if "text" in block:
-                        return block["text"]
-        except:
-            return "Не удалось разобрать ответ: " + str(data)
-
-        return "Пустой текст от OpenAI"
+            return f"Не удалось разобрать ответ: {data}"
 
     except Exception as e:
-        return "Ошибка запроса: " + str(e)
+        return f"Ошибка запроса: {str(e)}"
 
 
 @app.route("/", methods=["GET"])
@@ -101,12 +83,9 @@ def webhook():
 
     message = data["message"]
     chat_id = message["chat"]["id"]
+    text = message.get("text", "")
 
-    text = ""
-    if "text" in message and message["text"]:
-        text = message["text"]
-
-    # реагируем только на упоминание или /mtg
+    # отвечаем только на упоминание или /mtg
     if "@RebelMouse_bot" not in text and not text.startswith("/mtg"):
         return "ok"
 
