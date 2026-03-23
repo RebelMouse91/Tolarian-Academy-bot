@@ -1,6 +1,6 @@
 import os
 import requests
-from flask import Flask, request, jsonify
+from flask import Flask, request
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -12,134 +12,106 @@ MTG_KEYWORDS = [
     "mana", "spell", "creature", "planeswalker",
     "standard", "modern", "draft", "arena",
     "haste", "trample", "flying", "vigilance",
-    "lifelink", "deathtouch", "hexproof", "indestructible",
-    "scry", "draw", "discard", "token", "counter",
-    "land", "artifact", "enchantment", "instant", "sorcery"
+    "lifelink", "deathtouch", "hexproof"
 ]
 
 
-def is_mtg_related(text: str) -> bool:
+def is_mtg_related(text):
     text = (text or "").lower()
     return any(word in text for word in MTG_KEYWORDS)
 
 
-def send_message(chat_id: int, text: str) -> None:
+def send_message(chat_id, text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(
-        url,
-        json={
+    try:
+        requests.post(url, json={
             "chat_id": chat_id,
-            "text": text[:4000],  # Telegram limit safety
-        },
-        timeout=20,
-    )
+            "text": text[:4000]
+        }, timeout=10)
+    except:
+        pass
 
 
-def extract_response_text(data: dict) -> str:
-    # 1) Самый удобный случай
-    if data.get("output_text"):
-        return data["output_text"].strip()
-
-    # 2) Разбор стандартной структуры Responses API
-    output = data.get("output", [])
-    parts = []
-
-    for item in output:
-        content = item.get("content", [])
-        for block in content:
-            if block.get("type") == "output_text" and block.get("text"):
-                parts.append(block["text"])
-            elif block.get("type") == "text" and block.get("text"):
-                parts.append(block["text"])
-
-    text = "\n".join(parts).strip()
-    if text:
-        return text
-
-    return ""
-
-
-def ask_openai(user_text: str) -> str:
+def ask_openai(user_text):
     try:
         response = requests.post(
             "https://api.openai.com/v1/responses",
             headers={
                 "Authorization": f"Bearer {OPENAI_API_KEY}",
-                "Content-Type": "application/json",
+                "Content-Type": "application/json"
             },
             json={
                 "model": "gpt-4.1-mini",
-                "instructions": (
-                    "Ты помощник только по Magic: The Gathering. "
-                    "Отвечай кратко, точно и только по теме MTG. "
-                    "Если вопрос не про MTG, отвечай: 'Я отвечаю только по MTG.'"
-                ),
-                "input": user_text,
-                "max_output_tokens": 150,
+                "input": f"Ты эксперт по MTG. Отвечай кратко.\n\n{user_text}",
+                "max_output_tokens": 150
             },
-            timeout=45,
+            timeout=30
         )
 
-        # Если OpenAI вернул 4xx/5xx — покажем реальную ошибку
-        if not response.ok:
-            try:
-                error_data = response.json()
-                error_msg = error_data.get("error", {}).get("message", response.text)
-            except Exception:
-                error_msg = response.text
-            return f"Ошибка OpenAI: {error_msg}"
+        # если ошибка HTTP
+        if response.status_code != 200:
+            return f"Ошибка OpenAI: {response.text}"
 
-        data = response.json()
+        try:
+            data = response.json()
+        except:
+            return "Ошибка: OpenAI вернул не JSON"
 
-        # Если API вернул error в JSON
-        if "error" in data:
-            return f"Ошибка OpenAI: {data['error'].get('message', 'неизвестная ошибка')}"
+        # если API вернул ошибку
+        if isinstance(data, dict) and "error" in data:
+            return f"Ошибка OpenAI: {data['error'].get('message', 'неизвестная')}"
 
-        text = extract_response_text(data)
-        if text:
-            return text
+        # извлекаем текст безопасно
+        output = data.get("output") or []
+
+        texts = []
+        for item in output:
+            content = item.get("content") or []
+            for block in content:
+                if isinstance(block, dict):
+                    txt = block.get("text")
+                    if txt:
+                        texts.append(txt)
+
+        if texts:
+            return "\n".join(texts)
 
         return "OpenAI вернул пустой ответ."
 
-    except requests.Timeout:
-        return "Ошибка OpenAI: превышено время ожидания."
     except Exception as e:
-        return f"Ошибка запроса: {str(e)}"
+        return f"Ошибка: {str(e)}"
 
 
 @app.route("/", methods=["GET"])
 def home():
-    return "Bot is running", 200
+    return "Bot is running"
 
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def webhook():
-    if not BOT_TOKEN or not OPENAI_API_KEY:
-        return jsonify({"ok": False, "error": "Missing BOT_TOKEN or OPENAI_API_KEY"}), 500
+    data = request.json
 
-    data = request.get_json(silent=True) or {}
-
-    if "message" not in data:
-        return "ok", 200
+    if not data or "message" not in data:
+        return "ok"
 
     message = data["message"]
     chat_id = message["chat"]["id"]
-    text = message.get("text", "") or ""
+    text = message.get("text", "")
 
-    # Отвечаем только на упоминание бота или на /mtg
+    # реагируем только на упоминание или команду
     if "@RebelMouse_bot" not in text and not text.startswith("/mtg"):
-        return "ok", 200
+        return "ok"
 
     if not is_mtg_related(text):
         send_message(chat_id, "Я отвечаю только по MTG.")
-        return "ok", 200
+        return "ok"
 
     answer = ask_openai(text)
     send_message(chat_id, answer)
 
-    return "ok", 200
+    return "ok"
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", "10000"))
+    port = int(os.getenv("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
